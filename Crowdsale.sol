@@ -136,144 +136,6 @@ library SafeERC20 {
 
 
 /**
- * @title Escrow
- * @dev Base escrow contract, holds funds destinated to a payee until they
- * withdraw them. The contract that uses the escrow as its payment method
- * should be its owner, and provide public methods redirecting to the escrow's
- * deposit and withdraw.
- */
-contract Escrow is Ownable {
-    using SafeMath for uint256;
-
-    event Deposited(address indexed payee, uint256 weiAmount);
-    event Withdrawn(address indexed payee, uint256 weiAmount);
-
-    mapping(address => uint256) private deposits;
-
-    function depositsOf(address _payee) public view returns (uint256) {
-        return deposits[_payee];
-    }
-
-    /**
-    * @dev Stores the sent amount as credit to be withdrawn.
-    * @param _payee The destination address of the funds.
-    */
-    function deposit(address _payee) public onlyOwner payable {
-        uint256 amount = msg.value;
-        deposits[_payee] = deposits[_payee].add(amount);
-
-        emit Deposited(_payee, amount);
-    }
-
-    /**
-    * @dev Withdraw accumulated balance for a payee.
-    * @param _payee The address whose funds will be withdrawn and transferred to.
-    */
-    function withdraw(address _payee) public onlyOwner {
-        uint256 payment = deposits[_payee];
-        assert(address(this).balance >= payment);
-
-        deposits[_payee] = 0;
-
-        _payee.transfer(payment);
-
-        emit Withdrawn(_payee, payment);
-    }
-}
-
-
-/**
- * @title ConditionalEscrow
- * @dev Base abstract escrow to only allow withdrawal if a condition is met.
- */
-contract ConditionalEscrow is Escrow {
-    /**
-    * @dev Returns whether an address is allowed to withdraw their funds. To be
-    * implemented by derived contracts.
-    * @param _payee The destination address of the funds.
-    */
-    function withdrawalAllowed(address _payee) public view returns (bool);
-
-    function withdraw(address _payee) public {
-        require(withdrawalAllowed(_payee));
-        super.withdraw(_payee);
-    }
-}
-
-
-
-
-/**
- * @title RefundEscrow
- * @dev Escrow that holds funds for a beneficiary, deposited from multiple parties.
- * The contract owner may close the deposit period, and allow for either withdrawal
- * by the beneficiary, or refunds to the depositors.
- */
-contract RefundEscrow is Ownable, ConditionalEscrow {
-    enum State { Active, Refunding, Closed }
-
-    event Closed();
-    event RefundsEnabled();
-
-    State public state;
-    address public beneficiary;
-
-    /**
-     * @dev Constructor.
-     * @param _beneficiary The beneficiary of the deposits.
-     */
-    constructor(address _beneficiary) public {
-        require(_beneficiary != address(0));
-        beneficiary = _beneficiary;
-        state = State.Active;
-    }
-
-    /**
-     * @dev Stores funds that may later be refunded.
-     * @param _refundee The address funds will be sent to if a refund occurs.
-     */
-    function deposit(address _refundee) public payable {
-        require(state == State.Active);
-        super.deposit(_refundee);
-    }
-
-    /**
-     * @dev Allows for the beneficiary to withdraw their funds, rejecting
-     * further deposits.
-     */
-    function close() public onlyOwner {
-        require(state == State.Active);
-        state = State.Closed;
-        emit Closed();
-    }
-
-    /**
-     * @dev Allows for refunds to take place, rejecting further deposits.
-     */
-    function enableRefunds() public onlyOwner {
-        require(state == State.Active);
-        state = State.Refunding;
-        emit RefundsEnabled();
-    }
-
-    /**
-     * @dev Withdraws the beneficiary's funds.
-     */
-    function beneficiaryWithdraw() public {
-        require(state == State.Closed);
-        beneficiary.transfer(address(this).balance);
-    }
-
-    /**
-     * @dev Returns whether refundees can withdraw their deposits (be refunded).
-     */
-    function withdrawalAllowed(address _payee) public view returns (bool) {
-        _payee;
-        return state == State.Refunding;
-    }
-}
-
-/**
  * @title Crowdsale
  * @dev Crowdsale is a base contract for managing a token crowdsale,
  * allowing investors to purchase tokens with ether. This contract implements
@@ -297,7 +159,6 @@ contract Crowdsale is Ownable{
     uint256 public openingTime;
     uint256 public closingTime;
 
-    uint256 public goal;
     uint256 public cap;
 
     bool public isFinalized = false;
@@ -347,17 +208,15 @@ contract Crowdsale is Ownable{
 //Hard Cap: $30 million
 //Min Purchase: 50 OPK ЭТО С УЧЕТОМ БОСУНА ?
 //Max Purchase: 100 000 OPK  ЭТО С УЧЕТОМ БОСУНА ?
-    constructor(uint256 _rate, address _wallet, ERC20 _token, uint256 _goal, uint256 _cap,
+    constructor(uint256 _rate, address _wallet, ERC20 _token, uint256 _cap,
                 uint256 _openingTime, uint256 _closingTime) public {
         require(_rate > 0);
         require(_wallet != address(0));
         require(_token != address(0));
         require(_openingTime >= block.timestamp);
         require(_closingTime >= _openingTime);
-        require(_goal > 0);
         require(_cap > 0);
 
-        require(_goal <= _cap);
 
         rate = _rate;
         wallet = _wallet;
@@ -365,7 +224,6 @@ contract Crowdsale is Ownable{
 
         escrow = new RefundEscrow(wallet);
 
-        goal = _goal;
         cap = _cap;
         openingTime = _openingTime;
         closingTime = _closingTime;
@@ -502,7 +360,7 @@ contract Crowdsale is Ownable{
      * @dev Overrides Crowdsale fund forwarding, sending funds to escrow.
      */
     function _forwardFunds() internal {
-        escrow.deposit.value(msg.value)(msg.sender);
+        wallet.transfer(msg.value);
     }
 
     /**
@@ -514,13 +372,6 @@ contract Crowdsale is Ownable{
         return block.timestamp > closingTime;
     }
 
-    /**
-     * @dev Checks whether funding goal was reached.
-     * @return Whether funding goal was reached
-     */
-    function goalReached() public view returns (bool) {
-        return weiRaised >= goal;
-    }
 
     /**
     * @dev Checks whether the cap has been reached.
@@ -530,12 +381,6 @@ contract Crowdsale is Ownable{
         return weiRaised >= cap;
     }
 
-    function claimRefund() public {
-        require(isFinalized);
-        require(!goalReached());
-
-        escrow.withdraw(msg.sender);
-    }
 
     /**
      * @dev Must be called after crowdsale ends, to do some extra finalization
@@ -557,13 +402,6 @@ contract Crowdsale is Ownable{
      * executed entirely.
      */
     function finalization() internal {
-        if (goalReached()) {
-            escrow.close();
-            escrow.beneficiaryWithdraw();
-        } else {
-            escrow.enableRefunds();
-        }
-
         //TODO SEND TOKENS TO RESERFFOUND
     }
 
