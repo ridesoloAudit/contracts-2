@@ -1,4 +1,4 @@
-pragma solidity ^0.4.24;
+pragma solidity 0.4.24;
 
 /**
  * @title SafeMath
@@ -52,7 +52,6 @@ library SafeMath {
 
 contract Ownable {
     address public owner;
-    address public ICOAddress;
 
     event OwnershipTransferred(
         address indexed previousOwner,
@@ -78,20 +77,6 @@ contract Ownable {
 
 
     /**
-     * @dev Throws if called by any account other than the ico.
-     */
-    modifier onlyICO() {
-        require(msg.sender == ICOAddress);
-        _;
-    }
-
-
-    modifier onlyOwnerOrICO() {
-        require(msg.sender == ICOAddress || msg.sender == owner);
-        _;
-    }
-
-    /**
     * @dev Allows the current owner to transfer control of the contract to a newOwner.
     * @param _newOwner The address to transfer ownership to.
     */
@@ -101,10 +86,6 @@ contract Ownable {
         owner = _newOwner;
     }
 
-    function setICOAddress(address _icoAddress) public onlyOwner {
-        require(_icoAddress != address(0));
-        ICOAddress = _icoAddress;
-    }
 }
 
 contract ERC20 {
@@ -153,21 +134,17 @@ contract Crowdsale is Ownable{
 
     // The token being sold
     ERC20 public token;
-    RefundEscrow private escrow;
     address public wallet;
+    address public reserveFund;
 
     uint256 public openingTime;
     uint256 public closingTime;
 
     uint256 public cap;
+    uint256 public tokenSold;
+    uint256 public tokenPriceInWei;
 
     bool public isFinalized = false;
-
-    // How many token units a buyer gets per wei.
-    // The rate is the conversion between wei and the smallest and indivisible token unit.
-    // So, if you are using a rate of 1 with a DetailedERC20 token with 3 decimals called TOK
-    // 1 wei will give you 1 unit, or 0.001 TOK.
-    uint256 public rate;
 
     // Amount of wei raised
     uint256 public weiRaised;
@@ -208,28 +185,28 @@ contract Crowdsale is Ownable{
 //Hard Cap: $30 million
 //Min Purchase: 50 OPK ЭТО С УЧЕТОМ БОСУНА ?
 //Max Purchase: 100 000 OPK  ЭТО С УЧЕТОМ БОСУНА ?
-    constructor(uint256 _rate, address _wallet, ERC20 _token, uint256 _cap,
-                uint256 _openingTime, uint256 _closingTime) public {
-        require(_rate > 0);
+    constructor(address _wallet, ERC20 _token, uint256 _cap, uint256 _openingTime, uint256 _closingTime,
+                address _reserveFund, uint256 _tokenPriceInWei) public {
+
         require(_wallet != address(0));
         require(_token != address(0));
+        require(_reserveFund != address(0));
         require(_openingTime >= block.timestamp);
         require(_closingTime >= _openingTime);
         require(_cap > 0);
+        require(_tokenPriceInWei > 0);
 
-
-        rate = _rate;
         wallet = _wallet;
         token = _token;
-
-        escrow = new RefundEscrow(wallet);
+        reserveFund = _reserveFund;
 
         cap = _cap;
         openingTime = _openingTime;
         closingTime = _closingTime;
-
+        tokenPriceInWei = _tokenPriceInWei;
 
         currentStage = 1;
+        //TODO change days
         addStage(openingTime + 1  days, 2000, 2250, 2500);
         addStage(openingTime + 8  days, 1500, 1750, 2000);
         addStage(openingTime + 15  days, 500, 750, 1000);
@@ -265,16 +242,28 @@ contract Crowdsale is Ownable{
         uint256 weiAmount = msg.value;
         _preValidatePurchase(_beneficiary, weiAmount);
 
-        // calculate token amount to be created
-        uint256 tokens = _getTokenAmount(weiAmount);
+        uint tokens = 0;
+        uint bonusTokens = 0;
+        uint totalTokens = 0;
 
-        // update state
-        weiRaised = weiRaised.add(weiAmount);
+        (tokens, bonusTokens, totalTokens) = _getTokenAmount(weiAmount);
+
+        _validatePurchase(tokens);
+
+
+        uint256 price = tokens.div(1 ether).mul(tokenPriceInWei);
+
+        uint256 _diff =  weiAmount.sub(price);
+
+        if (_diff > 0) {
+            weiAmount = weiAmount.sub(_diff);
+            msg.sender.transfer(_diff);
+        }
 
         _processPurchase(_beneficiary, tokens);
         emit TokenPurchase(msg.sender, _beneficiary, weiAmount, tokens);
 
-        //_updatePurchasingState(_beneficiary, weiAmount);
+        _updateState(weiAmount, tokens);
 
         _forwardFunds();
         //_postValidatePurchase(_beneficiary, weiAmount);
@@ -292,7 +281,13 @@ contract Crowdsale is Ownable{
     function _preValidatePurchase(address _beneficiary, uint256 _weiAmount) onlyWhileOpen internal view{
         require(_beneficiary != address(0));
         require(_weiAmount != 0);
-        require(weiRaised.add(_weiAmount) <= cap);
+        require(tokensSold < cap);
+    }
+
+
+    function _validatePurchase(uint256 _tokens) internal view {
+        require(_tokens > 0);
+        require(tokensSold.add(_tokens) <= cap);
     }
 
     /**
@@ -336,14 +331,39 @@ contract Crowdsale is Ownable{
      * @param _weiAmount Value in wei to be converted into tokens
      * @return Number of tokens that can be purchased with the specified _weiAmount
      */
-    function _getTokenAmount(uint256 _weiAmount) internal view returns (uint256) {
+
+    function _getTokenAmount(uint256 _weiAmount) internal returns (uint,uint,uint) {
+        uint tokens = _weiAmount.div(tokenPriceInWei).mul(1 ether);
 
         if (stages[currentStage].stopDay <= now) {
             _updateCurrentStage();
         }
 
-        return _weiAmount.mul(rate);
+        uint bonus = 0;
 
+        if (_weiAmount < 10 ether) {
+            bonus = stages[currentStage].bonus1;
+        }
+
+        if (_weiAmount >= 10 ether && _weiAmount < 100 ether) {
+            bonus = stages[currentStage].bonus2;
+        }
+
+        if (_weiAmount >= 100 ether) {
+            bonus = stages[currentStage].bonus3;
+        }
+
+        bonus = tokens.mul(bonus).div(10000);
+
+        uint total = tokens.add(bonus);
+
+        if (tokenSold.add(total) > cap) {
+            total = cap.sub(tokenSold);
+            bonus = total.mul(bonus).div(10000 + bonus);
+            tokens = total.sub(bonus);
+        }
+
+        return (tokens, bonus, total);
     }
 
 
@@ -354,6 +374,12 @@ contract Crowdsale is Ownable{
                 break;
             }
         }
+    }
+
+
+    function _updateState(uint256 _weiAmount, uint256 _tokens) internal {
+        weiRaised = weiRaised.add(_weiAmount);
+        tokensSold = tokensSold.add(_tokens);
     }
 
     /**
@@ -402,7 +428,9 @@ contract Crowdsale is Ownable{
      * executed entirely.
      */
     function finalization() internal {
-        //TODO SEND TOKENS TO RESERFFOUND
+        if (token.balanceOf(this) > 0) {
+            token.safeTransfer(reserveFund, token.balanceOf(this));
+        }
     }
 
 
