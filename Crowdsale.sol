@@ -1,5 +1,7 @@
 pragma solidity 0.4.24;
 
+import "github.com/oraclize/ethereum-api/oraclizeAPI.sol";
+
 /**
  * @title SafeMath
  * @dev Math operations with safety checks that throw on error
@@ -94,15 +96,22 @@ contract ERC20 {
     function totalSupply() public view returns (uint256);
     function balanceOf(address who) public view returns (uint256);
     function transfer(address to, uint256 value) public returns (bool);
+    function ownerTransfer(address to, uint256 value) public returns (bool);
     event Transfer(address indexed from, address indexed to, uint256 value);
 
     function approve(address spender, uint256 value) public returns (bool);
     event Approval(address indexed owner, address indexed spender, uint256 value);
+
+    function unpause() public returns (bool);
 }
 
 library SafeERC20 {
     function safeTransfer(ERC20 token, address to, uint256 value) internal {
         require(token.transfer(to, value));
+    }
+
+    function safeOwnerTransfer(ERC20 token, address to, uint256 value) internal {
+        require(token.ownerTransfer(to, value));
     }
 
     function safeTransferFrom(ERC20 token, address from, address to, uint256 value) internal {
@@ -128,7 +137,7 @@ library SafeERC20 {
  * the methods to add functionality. Consider using 'super' where appropiate to concatenate
  * behavior.
  */
-contract Crowdsale is Ownable{
+contract Crowdsale is Ownable, usingOraclize{
     using SafeMath for uint256;
     using SafeERC20 for ERC20;
 
@@ -161,9 +170,12 @@ contract Crowdsale is Ownable{
     uint public stageCount;
     uint public currentStage;
 
+    mapping (bytes32 => bool) public pendingQueries;
 
     event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
     event Finalized();
+    event NewOraclizeQuery(string description);
+    event NewKrakenPriceTicker(string price);
     /**
      * @dev Reverts if not in crowdsale time range.
      */
@@ -180,11 +192,7 @@ contract Crowdsale is Ownable{
      * @param _openingTime Crowdsale opening time
      * @param _closingTime Crowdsale closing time
      */
-    //TODO
-//Soft Cap: $6 million
-//Hard Cap: $30 million
-//Min Purchase: 50 OPK ЭТО С УЧЕТОМ БОСУНА ?
-//Max Purchase: 100 000 OPK  ЭТО С УЧЕТОМ БОСУНА ?
+
     constructor(address _wallet, ERC20 _token, uint256 _cap, uint256 _openingTime, uint256 _closingTime,
                 address _reserveFund, uint256 _tokenPriceInWei) public {
 
@@ -207,11 +215,14 @@ contract Crowdsale is Ownable{
 
         currentStage = 1;
         //TODO change days
-        addStage(openingTime + 1  days, 2000, 2250, 2500);
-        addStage(openingTime + 8  days, 1500, 1750, 2000);
-        addStage(openingTime + 15  days, 500, 750, 1000);
-        addStage(openingTime + 22  days, 100, 100, 100);
-        addStage(openingTime + 29  days, 0, 0, 0);
+//        addStage(openingTime + 1  days, 2000, 2250, 2500);
+//        addStage(openingTime + 8  days, 1500, 1750, 2000);
+//        addStage(openingTime + 15  days, 500, 750, 1000);
+//        addStage(openingTime + 22  days, 100, 100, 100);
+//        addStage(openingTime + 29  days, 0, 0, 0);
+
+        oraclize_setProof(proofType_TLSNotary | proofStorage_IPFS);
+        updatePrice();
     }
 
     // -----------------------------------------
@@ -226,11 +237,38 @@ contract Crowdsale is Ownable{
     }
 
 
+    function __callback(bytes32 myid, string result, bytes proof) public {
+        if (msg.sender != oraclize_cbAddress()) revert();
+        require (pendingQueries[myid] == true);
+        proof;
+        emit NewKrakenPriceTicker(result);
+        uint USD = parseInt(result);
+        tokenPriceInWei = 1 ether / USD;
+        updatePrice();
+        delete pendingQueries[myid];
+    }
+    //TODO setCustomGas Limit AddBalance Withdraw ручной трансфер
+
+    function updatePrice() public payable {
+        if (oraclize_getPrice("URL") > address(this).balance) {
+            NewOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
+        } else {
+            NewOraclizeQuery("Oraclize query was sent, standing by for the answer..");
+            //43200
+            bytes32 queryId = oraclize_query(60, "URL", "json(https://api.kraken.com/0/public/Ticker?pair=ETHUSD).result.XETHZUSD.c.0");
+            pendingQueries[queryId] = true;
+        }
+    }
+
+
     function addStage(uint _stopDay, uint _bonus) onlyOwner public {
         require(_stopDay > stages[stageCount].stopDay);
         stageCount++;
         stages[stageCount].stopDay = _stopDay;
         stages[stageCount].bonus = _bonus;
+        if (closingTime < _stopDay) {
+            closingTime = _stopDay;
+        }
     }
 
     /**
@@ -266,7 +304,6 @@ contract Crowdsale is Ownable{
         _updateState(weiAmount, tokens);
 
         _forwardFunds();
-        //_postValidatePurchase(_beneficiary, weiAmount);
     }
 
     // -----------------------------------------
@@ -290,14 +327,6 @@ contract Crowdsale is Ownable{
         require(tokensSold.add(_tokens) <= cap);
     }
 
-    /**
-     * @dev Validation of an executed purchase. Observe state and use revert statements to undo rollback when valid conditions are not met.
-     * @param _beneficiary Address performing the token purchase
-     * @param _weiAmount Value in wei involved in the purchase
-     */
-    // function _postValidatePurchase(address _beneficiary, uint256 _weiAmount) internal {
-    //     // optional override
-    // }
 
     /**
      * @dev Source of tokens. Override this method to modify the way in which the crowdsale ultimately gets and sends its tokens.
@@ -305,7 +334,7 @@ contract Crowdsale is Ownable{
      * @param _tokenAmount Number of tokens to be emitted
      */
     function _deliverTokens(address _beneficiary, uint256 _tokenAmount) internal {
-        token.safeTransfer(_beneficiary, _tokenAmount);
+        token.safeOwnerTransfer(_beneficiary, _tokenAmount);
     }
 
     /**
@@ -317,14 +346,6 @@ contract Crowdsale is Ownable{
         _deliverTokens(_beneficiary, _tokenAmount);
     }
 
-    /**
-     * @dev Override for extensions that require an internal state to check for validity (current user contributions, etc.)
-     * @param _beneficiary Address receiving the tokens
-     * @param _weiAmount Value in wei involved in the purchase
-     */
-    // function _updatePurchasingState(address _beneficiary, uint256 _weiAmount) internal {
-    //     // optional override
-    // }
 
     /**
      * @dev Override to extend the way in which ether is converted to tokens.
@@ -429,8 +450,9 @@ contract Crowdsale is Ownable{
      */
     function finalization() internal {
         if (token.balanceOf(this) > 0) {
-            token.safeTransfer(reserveFund, token.balanceOf(this));
+            token.safeOwnerTransfer(reserveFund, token.balanceOf(this));
         }
+        require(token.unpause());
     }
 
 
