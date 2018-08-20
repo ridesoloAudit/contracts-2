@@ -293,7 +293,7 @@ contract Crowdsale is Ownable, usingOraclize{
 
         if (_diff > 0) {
             weiAmount = weiAmount.sub(_diff);
-            _beneficiary.transfer(_diff);
+            msg.sender.transfer(_diff);
         }
 
         _processPurchase(_beneficiary, totalTokens);
