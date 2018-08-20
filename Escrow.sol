@@ -106,6 +106,7 @@ contract Escrow is Ownable {
     struct Stage {
         uint releaseTime;
         uint percent;
+        bool transferred;
     }
 
     mapping (uint => Stage) public stages;
@@ -119,8 +120,13 @@ contract Escrow is Ownable {
         stopDay = _stopDay;
     }
 
+    function() payable public {
 
+    }
+
+    //1% - 100, 10% - 1000 50% - 5000
     function addStage(uint _releaseTime, uint _percent) onlyOwner public {
+        require(_percent >= 100);
         require(_releaseTime > stages[stageCount].releaseTime);
         stageCount++;
         stages[stageCount].releaseTime = _releaseTime;
@@ -130,11 +136,14 @@ contract Escrow is Ownable {
 
     function getETH(uint _stage, address _to) onlyOwner external {
         require(stages[_stage].releaseTime < now);
+        require(!stages[_stage].transferred);
+
         if (startBalance == 0) {
             startBalance = address(this).balance;
         }
 
         uint val = valueFromPercent(startBalance, stages[_stage].percent);
+        stages[_stage].transferred = true;
         _to.transfer(val);
     }
 
