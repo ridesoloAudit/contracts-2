@@ -138,10 +138,10 @@ contract Pausable is Ownable {
     /**
      * @dev called by the owner to pause, triggers stopped state
      */
-//    function pause() onlyOwner whenNotPaused public {
-//        paused = true;
-//        emit Pause();
-//    }
+    function pause() onlyOwner whenNotPaused public {
+        paused = true;
+        emit Pause();
+    }
 
     /**
      * @dev called by the owner to unpause, returns to normal state
@@ -206,10 +206,6 @@ contract StandardToken is ERC20, Pausable{
     }
 
     function ownerTransfer(address _to, uint256 _value) onlyOwnerOrICO public returns (bool) {
-        return _transfer(_to, _value);
-    }
-
-    function transfer(address _to, uint256 _value) whenNotPaused public returns (bool) {
         return _transfer(_to, _value);
     }
 

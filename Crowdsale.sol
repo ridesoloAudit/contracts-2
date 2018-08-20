@@ -171,11 +171,15 @@ contract Crowdsale is Ownable, usingOraclize{
     uint public currentStage;
 
     mapping (bytes32 => bool) public pendingQueries;
+    mapping (address => bool) public KYC;
+
+    uint public oraclizeBalance;
 
     event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
     event Finalized();
     event NewOraclizeQuery(string description);
     event NewKrakenPriceTicker(string price);
+
     /**
      * @dev Reverts if not in crowdsale time range.
      */
@@ -247,15 +251,15 @@ contract Crowdsale is Ownable, usingOraclize{
         updatePrice();
         delete pendingQueries[myid];
     }
-    //TODO setCustomGas Limit AddBalance Withdraw ручной трансфер
+
 
     function updatePrice() public payable {
         if (oraclize_getPrice("URL") > address(this).balance) {
             NewOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
         } else {
             NewOraclizeQuery("Oraclize query was sent, standing by for the answer..");
-            //43200
-            bytes32 queryId = oraclize_query(60, "URL", "json(https://api.kraken.com/0/public/Ticker?pair=ETHUSD).result.XETHZUSD.c.0");
+
+            bytes32 queryId = oraclize_query(43200, "URL", "json(https://api.kraken.com/0/public/Ticker?pair=ETHUSD).result.XETHZUSD.c.0");
             pendingQueries[queryId] = true;
         }
     }
@@ -288,7 +292,6 @@ contract Crowdsale is Ownable, usingOraclize{
 
         _validatePurchase(tokens);
 
-
         uint256 price = tokens.div(1 ether).mul(tokenPriceInWei);
 
         uint256 _diff =  weiAmount.sub(price);
@@ -306,6 +309,17 @@ contract Crowdsale is Ownable, usingOraclize{
         _forwardFunds();
     }
 
+
+    function manualSale(address _beneficiary, uint256 _tokens) onlyOwner external {
+        require(_beneficiary != address(0));
+        _validatePurchase(_tokens);
+        uint256 weiAmount = _tokens.mul(tokenPriceInWei);
+
+        _processPurchase(_beneficiary, _tokens);
+        emit TokenPurchase(msg.sender, _beneficiary, weiAmount, _tokens);
+        _updateState(weiAmount, _tokens);
+    }
+
     // -----------------------------------------
     // Internal interface (extensible)
     // -----------------------------------------
@@ -317,13 +331,14 @@ contract Crowdsale is Ownable, usingOraclize{
      */
     function _preValidatePurchase(address _beneficiary, uint256 _weiAmount) onlyWhileOpen internal view{
         require(_beneficiary != address(0));
+        require(KYC[_beneficiary]);
         require(_weiAmount != 0);
         require(tokensSold < cap);
     }
 
 
     function _validatePurchase(uint256 _tokens) internal view {
-        require(_tokens > 0);
+        require(_tokens >= 50 ether && _tokens <= 100000 ether);
         require(tokensSold.add(_tokens) <= cap);
     }
 
@@ -461,4 +476,29 @@ contract Crowdsale is Ownable, usingOraclize{
         uint _amount = _value.mul(_percent).div(10000);
         return (_amount);
     }
+
+    function addKYC(address _user) onlyOwner public {
+        KYC[_user] = true;
+    }
+
+    function delKYC(address _user) onlyOwner public {
+        KYC[_user] = false;
+    }
+
+
+    function addBalanceForOraclize() payable external {
+        oraclizeBalance = oraclizeBalance.add(msg.value);
+    }
+
+
+    function withdrawBalance() onlyOwner external {
+        require(address(this).balance > 0);
+        owner.transfer(address(this).balance);
+    }
+
+
+    function setGasPrice(uint _newPrice) public onlyOwner {
+        oraclize_setCustomGasPrice(_newPrice * 1 wei);
+    }
+
 }
