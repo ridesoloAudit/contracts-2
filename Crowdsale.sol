@@ -150,7 +150,7 @@ contract Crowdsale is Ownable, usingOraclize{
     uint256 public closingTime;
 
     uint256 public cap;
-    uint256 public tokenSold;
+    uint256 public tokensSold;
     uint256 public tokenPriceInWei;
 
     bool public isFinalized = false;
@@ -189,16 +189,9 @@ contract Crowdsale is Ownable, usingOraclize{
         _;
     }
 
-    /**
-     * @param _rate Number of token units a buyer gets per wei
-     * @param _wallet Address where collected funds will be forwarded to
-     * @param _token Address of the token being sold
-     * @param _openingTime Crowdsale opening time
-     * @param _closingTime Crowdsale closing time
-     */
 
     constructor(address _wallet, ERC20 _token, uint256 _cap, uint256 _openingTime, uint256 _closingTime,
-                address _reserveFund, uint256 _tokenPriceInWei) public {
+        address _reserveFund, uint256 _tokenPriceInWei) public {
 
         require(_wallet != address(0));
         require(_token != address(0));
@@ -219,11 +212,11 @@ contract Crowdsale is Ownable, usingOraclize{
 
         currentStage = 1;
         //TODO change days
-//        addStage(openingTime + 1  days, 2000, 2250, 2500);
-//        addStage(openingTime + 8  days, 1500, 1750, 2000);
-//        addStage(openingTime + 15  days, 500, 750, 1000);
-//        addStage(openingTime + 22  days, 100, 100, 100);
-//        addStage(openingTime + 29  days, 0, 0, 0);
+        //        addStage(openingTime + 1  days, 2000, 2250, 2500);
+        //        addStage(openingTime + 8  days, 1500, 1750, 2000);
+        //        addStage(openingTime + 15  days, 500, 750, 1000);
+        //        addStage(openingTime + 22  days, 100, 100, 100);
+        //        addStage(openingTime + 29  days, 0, 0, 0);
 
         oraclize_setProof(proofType_TLSNotary | proofStorage_IPFS);
         updatePrice();
@@ -255,9 +248,9 @@ contract Crowdsale is Ownable, usingOraclize{
 
     function updatePrice() public payable {
         if (oraclize_getPrice("URL") > address(this).balance) {
-            NewOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
+            emit NewOraclizeQuery("Oraclize query was NOT sent, please add some ETH to cover for the query fee");
         } else {
-            NewOraclizeQuery("Oraclize query was sent, standing by for the answer..");
+            emit NewOraclizeQuery("Oraclize query was sent, standing by for the answer..");
 
             bytes32 queryId = oraclize_query(43200, "URL", "json(https://api.kraken.com/0/public/Ticker?pair=ETHUSD).result.XETHZUSD.c.0");
             pendingQueries[queryId] = true;
@@ -265,11 +258,13 @@ contract Crowdsale is Ownable, usingOraclize{
     }
 
 
-    function addStage(uint _stopDay, uint _bonus) onlyOwner public {
+    function addStage(uint _stopDay, uint _bonus1, uint _bonus2, uint _bonus3) onlyOwner public {
         require(_stopDay > stages[stageCount].stopDay);
         stageCount++;
         stages[stageCount].stopDay = _stopDay;
-        stages[stageCount].bonus = _bonus;
+        stages[stageCount].bonus1 = _bonus1;
+        stages[stageCount].bonus2 = _bonus2;
+        stages[stageCount].bonus3 = _bonus3;
         if (closingTime < _stopDay) {
             closingTime = _stopDay;
         }
@@ -393,8 +388,8 @@ contract Crowdsale is Ownable, usingOraclize{
 
         uint total = tokens.add(bonus);
 
-        if (tokenSold.add(total) > cap) {
-            total = cap.sub(tokenSold);
+        if (tokensSold.add(total) > cap) {
+            total = cap.sub(tokensSold);
             bonus = total.mul(bonus).div(10000 + bonus);
             tokens = total.sub(bonus);
         }

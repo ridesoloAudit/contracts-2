@@ -120,16 +120,16 @@ contract Escrow is Ownable {
     }
 
 
-    function addStage(uint _stopDay, uint _percent) onlyOwner public {
-        require(_stopDay > stages[stageCount].stopDay);
+    function addStage(uint _releaseTime, uint _percent) onlyOwner public {
+        require(_releaseTime > stages[stageCount].releaseTime);
         stageCount++;
-        stages[stageCount].stopDay = _stopDay;
+        stages[stageCount].releaseTime = _releaseTime;
         stages[stageCount].percent = _percent;
     }
 
 
     function getETH(uint _stage, address _to) onlyOwner external {
-        require(stages[_stage].stopDay < now);
+        require(stages[_stage].releaseTime < now);
         if (startBalance == 0) {
             startBalance = address(this).balance;
         }
