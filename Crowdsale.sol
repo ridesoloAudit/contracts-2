@@ -175,7 +175,7 @@ contract Crowdsale is Ownable, usingOraclize{
 
     uint public oraclizeBalance;
 
-    event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 amount);
+    event TokenPurchase(address indexed purchaser, address indexed beneficiary, uint256 value, uint256 tokens, uint256 bonus);
     event Finalized();
     event NewOraclizeQuery(string description);
     event NewKrakenPriceTicker(string price);
@@ -293,15 +293,15 @@ contract Crowdsale is Ownable, usingOraclize{
 
         if (_diff > 0) {
             weiAmount = weiAmount.sub(_diff);
-            msg.sender.transfer(_diff);
+            _beneficiary.transfer(_diff);
         }
 
-        _processPurchase(_beneficiary, tokens);
-        emit TokenPurchase(msg.sender, _beneficiary, weiAmount, tokens);
+        _processPurchase(_beneficiary, totalTokens);
+        emit TokenPurchase(msg.sender, _beneficiary, weiAmount, tokens, bonusTokens);
 
-        _updateState(weiAmount, tokens);
+        _updateState(weiAmount, totalTokens);
 
-        _forwardFunds();
+        _forwardFunds(weiAmount);
     }
 
 
@@ -311,7 +311,7 @@ contract Crowdsale is Ownable, usingOraclize{
         uint256 weiAmount = _tokens.mul(tokenPriceInWei);
 
         _processPurchase(_beneficiary, _tokens);
-        emit TokenPurchase(msg.sender, _beneficiary, weiAmount, _tokens);
+        emit TokenPurchase(msg.sender, _beneficiary, weiAmount, _tokens, 0);
         _updateState(weiAmount, _tokens);
     }
 
@@ -416,8 +416,8 @@ contract Crowdsale is Ownable, usingOraclize{
     /**
      * @dev Overrides Crowdsale fund forwarding, sending funds to escrow.
      */
-    function _forwardFunds() internal {
-        wallet.transfer(msg.value);
+    function _forwardFunds(uint _weiAmount) internal {
+        wallet.transfer(_weiAmount);
     }
 
     /**
