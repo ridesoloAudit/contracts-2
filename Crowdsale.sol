@@ -252,7 +252,7 @@ contract Crowdsale is Ownable, usingOraclize{
         } else {
             emit NewOraclizeQuery("Oraclize query was sent, standing by for the answer..");
 
-            bytes32 queryId = oraclize_query(43200, "URL", "json(https://api.kraken.com/0/public/Ticker?pair=ETHUSD).result.XETHZUSD.c.0");
+            bytes32 queryId = oraclize_query(14400, "URL", "json(https://api.kraken.com/0/public/Ticker?pair=ETHUSD).result.XETHZUSD.c.0");
             pendingQueries[queryId] = true;
         }
     }

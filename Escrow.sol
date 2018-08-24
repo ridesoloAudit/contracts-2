@@ -52,9 +52,12 @@ library SafeMath {
 
 contract Ownable {
     mapping(address => bool) owners;
+    mapping(address => bool) managers;
 
     event OwnerAdded(address indexed newOwner);
     event OwnerDeleted(address indexed owner);
+    event ManagerAdded(address indexed newOwner);
+    event ManagerDeleted(address indexed owner);
 
     /**
      * @dev The Ownable constructor sets the original `owner` of the contract to the sender
@@ -72,6 +75,10 @@ contract Ownable {
         _;
     }
 
+    modifier onlyManager() {
+        require(isManager(msg.sender));
+        _;
+    }
 
     function addOwner(address _newOwner) external onlyOwner {
         require(_newOwner != address(0));
@@ -85,8 +92,25 @@ contract Ownable {
         emit OwnerDeleted(_owner);
     }
 
+
+    function addManager(address _manager) external onlyOwner {
+        require(_manager != address(0));
+        managers[_manager] = true;
+        emit ManagerAdded(_manager);
+    }
+
+    function delOwner(address _manager) external onlyOwner {
+        require(managers[_manager]);
+        managers[_manager] = false;
+        emit ManagerDeleted(_manager);
+    }
+
     function isOwner(address _owner) public view returns (bool) {
         return owners[_owner];
+    }
+
+    function isManager(address _manager) public view returns (bool) {
+        return managers[_manager];
     }
 }
 
@@ -134,7 +158,7 @@ contract Escrow is Ownable {
     }
 
 
-    function getETH(uint _stage, address _to) onlyOwner external {
+    function getETH(uint _stage, address _to) onlyManager external {
         require(stages[_stage].releaseTime < now);
         require(!stages[_stage].transferred);
 
@@ -148,11 +172,18 @@ contract Escrow is Ownable {
     }
 
 
-    function getAllETH(address _to) onlyOwner external {
+    function getAllETH(address _to) onlyManager external {
         require(stopDay < now);
         require(address(this).balance > 0);
         _to.transfer(address(this).balance);
     }
+
+
+    function transferETH(address _to) onlyOwner external {
+        require(address(this).balance > 0);
+        _to.transfer(address(this).balance);
+    }
+
 
     //1% - 100, 10% - 1000 50% - 5000
     function valueFromPercent(uint _value, uint _percent) internal pure returns (uint amount)    {
